@@ -61,7 +61,7 @@ class PuzzlePiece:
         return l
 
 def main():
-    rawImg = cv2.imread('/home/HQ/chill/Documents/other/testScripts/PuzzleSolver/three_pieces.JPG')
+    rawImg = cv2.imread('~/Documents/other/testScripts/PuzzleSolver/three_pieces.JPG')
     # rawImg = cv2.imread('./scoops.JPG')
 
     height, width = rawImg.shape[:2]
