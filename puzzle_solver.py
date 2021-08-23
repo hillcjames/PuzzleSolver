@@ -81,7 +81,7 @@ def main():
 
 
 
-    ## Gen lower mask (0-5) and upper maimgsk (175-180) of RED
+    ## Gen lower mask (0-5) and upper mask (175-180) of RED
     # mask1 = cv2.inRange(smallChip, (150,0,0), (255,50,50))
     # print(mask1.shape)
     # print(smallChip.shape)
