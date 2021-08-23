@@ -4,6 +4,7 @@ from PIL import Image, ImageDraw
 import numpy as np
 import traceback
 import math
+from scipy import ndimage
 
 
 class PuzzlePiece:
@@ -11,8 +12,15 @@ class PuzzlePiece:
         self.contour = contour
         self.contourDims = self.getXYMinAndWidthHeight()
         self.sharpCorners = None
+        self.corners = None
         self.trueCorners = None
+        self.chip = None
+        self.center = None
 
+    def setChip(self, newChip):
+        # x1, y1, w, h = self.contourDims[:]
+        # self.chip = binImg[y1:y1+h, x1:x1+w]
+        self.chip = newChip
 
     def getContourShiftedNearOrigin(self, border):
         shift = self.getOffset(border)
@@ -85,8 +93,8 @@ def main():
 
     super_threshold_indices = red > 130
     red[super_threshold_indices] = 255
-
     cleanedBinImg = getConnectedComponents(red)
+
 
     contours = getListofPieceContours(cleanedBinImg)
 
@@ -111,51 +119,95 @@ def main():
         border = 300
         if (offsetW + border > chipImg.shape[1]) or (offsetH + border > chipImg.shape[0]):
             chipImg = np.zeros((offsetH + border*2, offsetW + border*2), np.uint8)
-            cleanedBinImg = img[y1:y2, x1:x2]
+        cleanedBinChipImg = img[offsetY:offsetY+offsetH, offsetX:offsetX+offsetW]
+        piece.setChip(cleanedBinChipImg)
 
         # cv2.drawContours(chipImg, piece.getContourShiftedNearOrigin(border), -1, (255,255,255), 3)
 
-        shiftedContour = piece.getContourShiftedNearOrigin(border).reshape((-1, 1, 2))
-        cv2.polylines(chipImg, [shiftedContour], True, (255, 255, 255), 1 )
-
+        shiftedContourTest = piece.getContourShiftedNearOrigin(border).reshape((-1, 1, 2))
+        cv2.polylines(chipImg, [shiftedContourTest], True, (255, 255, 255), 1 )
         # sharpCorners = findCornersCV2(chipImg, 40, qualityLevel=0.1, minDistance=1)
         # sharpCorners = findCornersHarris(chipImg)[1:]
-        sharpCorners = piece.getContourAsList(4, shifted=True, border=border)
+        piece.sharpCorners = piece.getContourAsList(4, shifted=True, border=border)
 
         # print(len(sharpCorners))
-        for sharpCorner in sharpCorners:
+        for sharpCorner in piece.sharpCorners:
             originalCornerPos = (int(offsetX + sharpCorner[0] - border), int(offsetY + sharpCorner[1] - border))
             cv2.circle(outImColor, originalCornerPos, radius=2, color=(0, 0, 255), thickness=3)
             cv2.circle(chipImg, asTup(sharpCorner), radius=3, color=(0, 0, 255), thickness=3)
             # print(sharpCorner[0], sharpCorner[1])
         # print(chipImg.shape)
-        getListOfSides(chipImg, piece, sharpCorners)
+        findRealCorners(chipImg, piece)
         # showNumpy(chipImg)
         # # showNumpy(outImGray)
         # return
         chipImg.fill(0)
-        break
-    #
-    #
-    # sharpCornersAll = findCornersCV2(outImGray.astype(np.uint8), 200, qualityLevel=0.6, minDistance=8)
-    # for sharpCorner in sharpCornersAll:
-    #     originalCornerPos = (int(sharpCorner[0]), int(sharpCorner[1]))
-    #     cv2.circle(outImColor, originalCornerPos, radius=2, color=(30, 255, 40), thickness=4)
 
-    # for c in realContoursAll:
-    #     drawCounterOutline(outImColor, c)
+    exit()
 
-    # findCornersHarris(outImGray)
+    edges = getEdgesSortedByLength(puzzlePieces)
 
-    # showNumpy(outImGray)
-    # showNumpy(outImColor)
 
-def getListOfSides(img, piece, sharpCorners):
+    # canvas = np.zeros((1200, 1200), np.uint8)
+    for e1 in edges:
+        for e2 in edges:
+            print(abs(e1['sqrDist'] - e2['sqrDist']))
+            if (e1['piece'] != e2['piece']) and abs(e1['sqrDist'] - e2['sqrDist']) < 300:
+                piece1 = e1['piece']
+                piece2 = e2['piece']
+                chip1 = piece1.chip
+                chip2 = piece2.chip
+
+                angleFromCenterToFurtherCwCorner = getAngleOfLine(piece1.center, e1['edge'][0])
+
+                # chip1 = ndimage.rotate(piece1.chip, 5)
+
+                # piece1.
+                print([e1['edge'][0]] - piece1.center + 100, piece1.contourDims)
+
+                plotPoints(piece1.chip, [(100,100), e1['edge'][0]] - piece1.center, radius=2, color=(128, 255, 125), thickness=2)
+                showNumpy(piece1.chip)
+                showNumpy(piece2.chip)
+                exit()
+
+                chipImgColor = cv2.cvtColor(np.zeros((800, 800), np.uint8), cv2.COLOR_GRAY2RGB)
+
+                offset = 200
+                x1 = piece1.contourDims[0] + offset
+                y1 = piece1.contourDims[1] + offset
+                chipImgColor[x1:x1+piece1.chip.shape[0], y1:y1+piece1.chip.shape[1], :] = piece1.chip
+
+                x2 = piece2.contourDims[0] + offset
+                y2 = piece2.contourDims[1] + offset
+                chipImgColor[x2:x2+piece2.chip.shape[0], y2:y2+piece2.chip.shape[1], :] = piece2.chip
+
+                showNumpy(chipImgColor)
+                exit()
+        # break
+
+def getAngleOfLine(p1, p2):
+    diff = p2-p1
+    return math.atan2(diff[0], diff[1])
+
+def getEdgesSortedByLength(pieces):
+    edges = []
+    for piece in pieces:
+        for i in range(0,4):
+            edge = np.array([piece.corners[i], piece.corners[(i+1)%4]])
+            sqrDist = (edge[0][0] - edge[1][0])**2 + (edge[0][1] - edge[1][1])**2
+            edges.append({"edge": edge, "sqrDist": sqrDist, "piece":piece})
+
+    return sorted(edges, key=lambda e:e["sqrDist"])
+
+
+
+def findRealCorners(img, piece):
     imgColor = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
     center = np.array([0.0,0.0])
-    for c in sharpCorners:
+    for c in piece.sharpCorners:
         center += c
-    center /= len(sharpCorners)
+    center /= len(piece.sharpCorners)
+    piece.center = center
     cv2.circle(imgColor, asTup(center), radius=3, color=(0, 255, 0), thickness=3)
     steps = 24
     bestRect = None
@@ -165,8 +217,8 @@ def getListOfSides(img, piece, sharpCorners):
         theta = 2*math.pi*(i%steps)/steps
         fakeOutlier = center + piece.contourDims[2]*2*np.array([math.cos(theta), math.sin(theta)])
         cv2.circle(imgColor, asTup(fakeOutlier), radius=3, color=(0, 0, 255), thickness=3)
-        # print(sharpCorners)
-        newPoints = np.float32(np.vstack([sharpCorners, fakeOutlier]))
+        # print(piece.sharpCorners)
+        newPoints = np.float32(np.vstack([piece.sharpCorners, fakeOutlier]))
 
         # (center(x, y), (width, height), angle of rotation) = cv2.minAreaRect(c)
         rect = cv2.minAreaRect(newPoints)
@@ -174,7 +226,7 @@ def getListOfSides(img, piece, sharpCorners):
         box = np.int0(box)
         pts = box.reshape((-1, 1, 2))
         cv2.polylines(imgColor, [pts], True, (125, 0, 0), 1 )
-        pntsOnBorder, matchingEdge = getPointsWithinDistOfOneLineOfRect(sharpCorners, box, 16)
+        pntsOnBorder, matchingEdge = getPointsWithinDistOfOneLineOfRect(piece.sharpCorners, box, 16)
         # print(i, len(pntsOnBorder))
         if len(pntsOnBorder) > len(mostPointsOnABorder):
             mostPointsOnABorder = pntsOnBorder
@@ -182,31 +234,93 @@ def getListOfSides(img, piece, sharpCorners):
             bestRect = box
 
         # break
-    c1, c4 = getClosestPointsToCorners(mostPointsOnABorder, bestEdge)[:]
-    c2, pntsOnc1c2Edge = getBestNextCorner(c1, c4, sharpCorners)
-    cv2.circle(imgColor, asTup(c1), radius=3, color=(255, 0, 255), thickness=4)
-    cv2.circle(imgColor, asTup(c4), radius=3, color=(255, 255, 0), thickness=4)
-    cv2.circle(imgColor, asTup(c2), radius=5, color=(0, 255, 255), thickness=4)
-    plotPoints(imgColor, pntsOnc1c2Edge, radius=2, color=(128, 255, 125), thickness=2)
-    # c3 = getBestNextCorner(c4, c3, sharpCorners)
-    #
-    # realCorners = [c1, c2, c3, c4]
-    # for borderPoint in mostPointsOnABorder:
-    #     cv2.circle(imgColor, asTup(borderPoint), radius=3, color=(0, 255, 255), thickness=3)
-    # for realCorner in realCorners:
-    #     cv2.circle(imgColor, asTup(realCorner), radius=3, color=(255, 0, 255), thickness=3)
-    #
-    # print(bestRect)
-    # pts = bestRect.reshape((-1, 1, 2))
-    # cv2.polylines(imgColor, [pts], True, (255, 0, 0), 3 )
-    showNumpy(imgColor)
+    c2, c3 = getClosestPointsToCorners(mostPointsOnABorder, bestEdge)[:]
+    c1, pntsOnc1c2Edge = getBestNextCorner(c2, c3, piece.sharpCorners)
+    c4, pntsOnc1c2Edge = getBestNextCorner(c3, c2, piece.sharpCorners)
 
+    corners = validateCornersByDist(c1, c2, c3, c4, piece.sharpCorners)
+
+    # cv2.circle(imgColor, asTup(c1), radius=3, color=(255, 0, 255), thickness=4)
+    # cv2.circle(imgColor, asTup(c4), radius=3, color=(255, 255, 0), thickness=4)
+    # cv2.circle(imgColor, asTup(c2), radius=5, color=(0, 255, 255), thickness=4)
+    # cv2.circle(imgColor, asTup(c3), radius=5, color=(0, 255, 0), thickness=4)
+    for c in corners:
+        cv2.circle(imgColor, asTup(c), radius=3, color=(255, 0, 255), thickness=4)
+
+    showNumpy(imgColor)
+    piece.corners = corners
+
+def validateCornersByDist(c1, c2, c3, c4, otherPoints):
+    bestCorner = []
+    bestAngle = 0
+    worstAngle = 90
+    corners = [c1, c2, c3, c4]
+    for i in range(3):
+        # print(corners)
+        angle = closeToRightAngle(corners)
+        if abs(abs(angle) - 90) < abs(abs(bestAngle) - 90):
+            bestAngle = angle
+            bestCorner = corners[:3]
+        if abs(abs(angle) - 90) > abs(abs(worstAngle) - 90):
+            worstAngle = angle
+
+
+        shiftedCorners = corners[1:]
+        shiftedCorners.append(corners[0])
+        corners = shiftedCorners
+    # print(abs(abs(worstAngle) - 90))
+    if abs(abs(worstAngle) - 90) < 15:
+        return corners
+
+    remainingCorner = calcRemainingCorner(bestCorner)
+
+    bestCorner.append(getClosestPointToPoint(otherPoints, remainingCorner))
+    return bestCorner
+
+def validateCornersByAngle(c1, c2, c3, c4, otherPoints):
+    bestCorner = []
+    bestAngle = 0
+    worstAngle = 90
+    corners = [c1, c2, c3, c4]
+    for i in range(3):
+        # print(corners)
+        angle = closeToRightAngle(corners)
+        if abs(abs(angle) - 90) < abs(abs(bestAngle) - 90):
+            bestAngle = angle
+            bestCorner = corners[:3]
+        if abs(abs(angle) - 90) > abs(abs(worstAngle) - 90):
+            worstAngle = angle
+
+
+        shiftedCorners = corners[1:]
+        shiftedCorners.append(corners[0])
+        corners = shiftedCorners
+    # print(abs(abs(worstAngle) - 90))
+    if abs(abs(worstAngle) - 90) < 15:
+        return corners
+
+    remainingCorner = calcRemainingCorner(bestCorner)
+
+    bestCorner.append(getClosestPointToPoint(otherPoints, remainingCorner))
+    return bestCorner
+
+def calcRemainingCorner(threePoints):
+    return (threePoints[0] - threePoints[1]) + threePoints[2]
+
+def closeToRightAngle(points):
+    ba = points[0] - points[1]
+    bc = points[2] - points[1]
+
+    cosine_angle = np.dot(ba, bc) / (np.linalg.norm(ba) * np.linalg.norm(bc))
+    angle = np.arccos(cosine_angle)
+
+    return np.degrees(angle)
 
 def getBestNextCorner(pivotCorner, otherKnownCorner, points):
     numPoints = len(points)
     pivotCornerIndex = getIndexOf(points, pivotCorner)
     otherKnownCornerIndex = getIndexOf(points, otherKnownCorner)
-    print("t", otherKnownCornerIndex, pivotCornerIndex)
+    # print("t", otherKnownCornerIndex, pivotCornerIndex)
     deltaIndex = otherKnownCornerIndex - pivotCornerIndex
     if abs(deltaIndex) > numPoints//2:
         if deltaIndex > 0:
@@ -221,14 +335,18 @@ def getBestNextCorner(pivotCorner, otherKnownCorner, points):
 
     mostPointsOnEdge = []
     bestCorner = None
-    for i in range(1, numPoints//4):
+    for i in range(1, numPoints//3):
         index = (pivotCornerIndex + i*directionAwayFromPivotOppositeOther) % numPoints
         possibleCorner = points[index]
         pointsOnEdge = getPointsWithinDistOfLine(points, [pivotCorner, possibleCorner], 10)
-        if len(pointsOnEdge) > len(mostPointsOnEdge):
+        if len(pointsOnEdge) >= len(mostPointsOnEdge):
             mostPointsOnEdge = pointsOnEdge
             bestCorner = possibleCorner
-        print(index, len(pointsOnEdge), len(mostPointsOnEdge))
+        # print(index, len(pointsOnEdge), len(mostPointsOnEdge), possibleCorner)
+
+    # So bestCorner is the point that creates the best line (where the line isn't confined to the two containing points)
+    # So we actually need to return the furthest of the points within mostPointsOnEdge
+    bestCorner = getFurthestPoint(mostPointsOnEdge, pivotCorner)
     return bestCorner, mostPointsOnEdge
 
 
@@ -240,6 +358,16 @@ def getPointsWithinDistOfLine(points, line, tolerance):
             pointsOnEdge.append(p)
     return pointsOnEdge
 
+def getFurthestPoint(points, target):
+    furthestDistSqr = 0
+    furthestPoint = None
+    for p in points:
+        sqrDist = (p[0] - target[0])**2 + (p[1] - target[1])**2
+        if sqrDist > furthestDistSqr:
+            furthestDistSqr = sqrDist
+            furthestPoint = p
+    return furthestPoint
+
 
 def getIndexOf(points, p):
     for i in range(len(points)):
@@ -248,8 +376,12 @@ def getIndexOf(points, p):
     return -1
 
 def plotPoints(img, points, radius, color, thickness):
+    i = 0
+    step = 255//len(points)
     for p in points:
+        color = (0, 20+ i*step, 255-i*step)
         cv2.circle(img, asTup(p), radius=radius, color=color, thickness=thickness)
+        i+=1
 
 def getClosestPointsToCorners(points, corners):
     c1 = getClosestPointToPoint(points, corners[0])
